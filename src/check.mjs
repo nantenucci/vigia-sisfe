@@ -63,12 +63,14 @@ async function buscar(page) {
       if (celdas.length < 5) continue;
       const [expediente, caratula, fechaInicio, ultimaActualizacion, radicacion] = celdas;
       if (!expediente?.trim()) continue;
+      const href = await fila.locator('a').first().getAttribute('href').catch(() => null);
       causas.push({
         expediente: expediente.trim(),
         caratula: caratula.trim(),
         fecha_inicio: fechaInicio.trim(),
         ultima_actualizacion: ultimaActualizacion.trim(),
         radicacion: radicacion.trim(),
+        url: href ? new URL(href, 'https://sisfe.justiciasantafe.gov.ar').toString() : null,
       });
     }
 
@@ -134,6 +136,7 @@ async function avisarCambios({ nuevas, actualizadas }) {
     lineas.push(`EXPEDIENTES NUEVOS (${nuevas.length}):`);
     for (const c of nuevas) {
       lineas.push(`  - ${c.expediente} — ${c.caratula} — ${c.radicacion}`);
+      if (c.url) lineas.push(`    ${c.url}`);
     }
     lineas.push('');
   }
@@ -141,6 +144,7 @@ async function avisarCambios({ nuevas, actualizadas }) {
     lineas.push(`EXPEDIENTES CON NOVEDADES (${actualizadas.length}):`);
     for (const { actual, antes } of actualizadas) {
       lineas.push(`  - ${actual.expediente} — ${actual.caratula} — actualizado ${antes} -> ${actual.ultima_actualizacion}`);
+      if (actual.url) lineas.push(`    ${actual.url}`);
     }
   }
 
