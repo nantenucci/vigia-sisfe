@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -37,6 +37,7 @@ jobs:
           echo
           echo "--- curl a sisfe.justiciasantafe.gov.ar ---"
           curl -v --max-time 20 https://sisfe.justiciasantafe.gov.ar/ 2>&1 | tail -60 || true
+
 
       - name: Correr chequeo
         env:
