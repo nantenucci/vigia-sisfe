@@ -30,15 +30,6 @@ jobs:
       - name: Instalar navegador (chromium)
         run: npx playwright install --with-deps chromium
 
-      - name: Diagnostico de red (temporal)
-        run: |
-          echo "IP publica del runner:"
-          curl -s https://api.ipify.org || true
-          echo
-          echo "--- curl a sisfe.justiciasantafe.gov.ar ---"
-          curl -v --max-time 20 https://sisfe.justiciasantafe.gov.ar/ 2>&1 | tail -60 || true
-
-
       - name: Correr chequeo
         env:
           SISFE_MATRICULA: ${{ secrets.SISFE_MATRICULA }}
@@ -57,5 +48,8 @@ jobs:
           git config user.name "vigia-sisfe-bot"
           git config user.email "actions@users.noreply.github.com"
           git add data/state.json
-          git diff --cached --quiet || git commit -m "chore: actualizar snapshot de causas"
-          git push
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "chore: actualizar snapshot de causas"
+            git push
+          }
