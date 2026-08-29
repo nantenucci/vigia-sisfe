@@ -6,7 +6,7 @@
   "description": "Vigia automatico de causas propias en SISFE (Poder Judicial de Santa Fe) con aviso por email ante novedades.",
   "scripts": {
     "check": "node src/check.mjs",
-    "test:selectors": "node src/test-selectors.mjs",
+    "login": "node src/save-session.mjs",
     "postinstall": "playwright install --with-deps chromium"
   },
   "dependencies": {

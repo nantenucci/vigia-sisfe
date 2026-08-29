@@ -1,75 +1,65 @@
-// Vigia SISFE: entra a la Autoconsulta Web del Poder Judicial de Santa Fe con
-// las credenciales de un matriculado, trae la lista de expedientes vinculados
-// a esa matricula, la compara contra la ultima corrida (data/state.json) y
-// manda un email si hay expedientes nuevos o con novedades.
+// Vigia SISFE: reusa una sesion ya logueada (guardada por save-session.mjs)
+// para traer la lista de expedientes vinculados a la matricula, la compara
+// contra la ultima corrida y manda un email si hay expedientes nuevos o con
+// novedades.
 //
-// Variables de entorno requeridas:
-//   SISFE_MATRICULA        numero de matricula (sin puntos ni espacios)
-//   SISFE_CONTRASENA       contraseña de SISFE
-//   SISFE_CIRCUNSCRIPCION  "Santa Fe" | "Rosario" | "Venado Tuerto" | "Reconquista" | "Rafaela"
-//   SISFE_COLEGIO          por defecto "Abogados"
+// El login de SISFE exige resolver un reCAPTCHA, asi que no se automatiza:
+// el usuario se loguea a mano una vez (node src/save-session.mjs) y este
+// script reutiliza esa sesion mientras siga viva. Si vence, este script lo
+// detecta y avisa por email en vez de intentar loguearse solo.
+//
+// El snapshot de causas (state.json) y la sesion (session.json) tienen
+// nombres y caratulas reales de clientes: nunca se guardan adentro del
+// repo ni se suben a git. Viven en el disco de la PC que corre el chequeo,
+// fuera de la carpeta de trabajo (para que "git clean" del checkout no los
+// borre entre corridas).
+//
+// Variables de entorno:
 //   NOTIFY_EMAIL           direccion que recibe los avisos
 //   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS   credenciales del remitente
+//   SESSION_PATH           opcional, default ~/.vigia-sisfe/session.json
+//   STATE_PATH             opcional, default ~/.vigia-sisfe/state.json
 
 import { chromium } from 'playwright';
 import nodemailer from 'nodemailer';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 
-const STATE_PATH = path.resolve('data/state.json');
-
-const required = ['SISFE_MATRICULA', 'SISFE_CONTRASENA'];
-for (const key of required) {
-  if (!process.env[key]) {
-    console.error(`Falta la variable de entorno ${key}`);
-    process.exit(1);
-  }
-}
-
-const CIRCUNSCRIPCION = process.env.SISFE_CIRCUNSCRIPCION || 'Rosario';
-const COLEGIO = process.env.SISFE_COLEGIO || 'Abogados';
-
-async function login(page) {
-  await page.goto('https://sisfe.justiciasantafe.gov.ar', { waitUntil: 'domcontentloaded' });
-  await page.getByRole('button', { name: 'Matriculados' }).waitFor({ timeout: 30000 });
-  await page.getByRole('button', { name: 'Matriculados' }).click();
-
-  await page.waitForSelector('text=IDENTIFICACIÓN DEL MATRICULADO');
-
-  const combos = page.locator('select');
-  await combos.nth(0).selectOption({ label: CIRCUNSCRIPCION });
-  await combos.nth(1).selectOption({ label: COLEGIO });
-
-  await page.waitForSelector('#matricula');
-  await page.locator('#matricula').fill(process.env.SISFE_MATRICULA);
-  await page.locator('#password').fill(process.env.SISFE_CONTRASENA);
-
-  await page.getByRole('button', { name: 'Ingresar' }).click();
-  try {
-    await page.waitForURL('**/buscar-expediente', { timeout: 30000 });
-  } catch (err) {
-    // No exponemos usuario/contraseña, solo lo que el sitio muestra en pantalla
-    // (mensaje de error de login, campo obligatorio faltante, etc.).
-    const texto = await page.locator('body').innerText().catch(() => '(no se pudo leer la pagina)');
-    console.error('No se pudo entrar a /buscar-expediente. URL actual:', page.url());
-    console.error('Texto visible en pantalla en ese momento:\n', texto);
-    throw err;
-  }
-}
+const STATE_PATH = process.env.STATE_PATH || path.join(os.homedir(), '.vigia-sisfe', 'state.json');
+const SESSION_PATH = process.env.SESSION_PATH || path.join(os.homedir(), '.vigia-sisfe', 'session.json');
 
 async function buscar(page) {
-  // Deja todos los filtros vacios: trae todo lo vinculado a la matricula.
+  await page.goto('https://sisfe.justiciasantafe.gov.ar/buscar-expediente', { waitUntil: 'domcontentloaded' });
+
+  if (!page.url().includes('/buscar-expediente')) {
+    throw new SessionExpiradaError(`La sesion guardada ya no sirve (redirigio a ${page.url()}).`);
+  }
+
+  // "Debe ingresar algun valor de busqueda": no se puede dejar todo vacio.
+  // Usamos el filtro de dias con un numero grande para traer todo lo
+  // vinculado a la matricula, sin filtrar por nombre/caratula.
+  await page.locator('#diasNovedades').fill('9999');
   await page.getByRole('button', { name: 'Efectuar la búsqueda' }).click();
-  // Espera a que aparezca el mensaje de resultados o la fila "no encontrados".
   await page.waitForSelector('text=/expedientes? (para|encontrado)/i', { timeout: 30000 });
+  if (process.env.DEBUG_CELDAS) {
+    console.log('Resumen:', await page.locator('text=/Se han encontrado/i').innerText().catch(() => '(sin resumen)'));
+  }
 
   const causas = [];
+  let pagina = 1;
   while (true) {
+    if (process.env.DEBUG_CELDAS) console.log('--- pagina', pagina, '---');
     const filas = page.locator('table tbody tr, [role="row"]').filter({ hasText: /\d{2,}-\d+/ });
     const count = await filas.count();
     for (let i = 0; i < count; i++) {
       const fila = filas.nth(i);
-      const celdas = await fila.locator('td, [role="cell"]').allInnerTexts();
+      // Hay celdas de icono/columna-info sin texto (tramitacion digital,
+      // boton de info) mezcladas con las 5 columnas reales. Nos quedamos
+      // solo con las celdas que tienen contenido.
+      const celdas = (await fila.locator('td, [role="cell"]').allInnerTexts())
+        .map((c) => c.trim())
+        .filter(Boolean);
       if (celdas.length < 5) continue;
       const [expediente, caratula, fechaInicio, ultimaActualizacion, radicacion] = celdas;
       if (!expediente?.trim()) continue;
@@ -82,15 +72,21 @@ async function buscar(page) {
       });
     }
 
-    const siguiente = page.getByRole('button', { name: 'Siguiente' }).first();
-    const disabled = await siguiente.isDisabled().catch(() => true);
-    if (disabled) break;
-    await siguiente.click();
+    const siguienteLi = page.locator('li.page-item', { hasText: 'Siguiente' }).first();
+    const existe = await siguienteLi.count();
+    const clase = existe ? await siguienteLi.getAttribute('class').catch(() => '') : '';
+    const deshabilitado = /disabled/i.test(clase || '');
+    if (process.env.DEBUG_CELDAS) console.log('Siguiente existe:', !!existe, 'clase li:', clase);
+    if (!existe || deshabilitado) break;
+    await siguienteLi.locator('a').click();
     await page.waitForTimeout(1500);
+    pagina++;
   }
 
   return causas;
 }
+
+class SessionExpiradaError extends Error {}
 
 function diff(previas, actuales) {
   const previasPorExpediente = new Map(previas.map((c) => [c.expediente, c]));
@@ -109,9 +105,9 @@ function diff(previas, actuales) {
   return { nuevas, actualizadas };
 }
 
-async function enviarEmail({ nuevas, actualizadas }) {
+async function enviarEmail(asunto, cuerpo) {
   if (!process.env.SMTP_HOST) {
-    console.log('SMTP no configurado, salteo el envio de email. Cambios detectados:', { nuevas, actualizadas });
+    console.log(`SMTP no configurado, salteo el envio de email.\nAsunto: ${asunto}\n${cuerpo}`);
     return;
   }
 
@@ -122,6 +118,17 @@ async function enviarEmail({ nuevas, actualizadas }) {
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
   });
 
+  await transporter.sendMail({
+    from: process.env.SMTP_USER,
+    to: process.env.NOTIFY_EMAIL,
+    subject: asunto,
+    text: cuerpo,
+  });
+
+  console.log('Email enviado:', asunto);
+}
+
+async function avisarCambios({ nuevas, actualizadas }) {
   const lineas = [];
   if (nuevas.length) {
     lineas.push(`EXPEDIENTES NUEVOS (${nuevas.length}):`);
@@ -137,14 +144,10 @@ async function enviarEmail({ nuevas, actualizadas }) {
     }
   }
 
-  await transporter.sendMail({
-    from: process.env.SMTP_USER,
-    to: process.env.NOTIFY_EMAIL,
-    subject: `Vigia SISFE: ${nuevas.length} nueva(s), ${actualizadas.length} con novedad(es)`,
-    text: lineas.join('\n'),
-  });
-
-  console.log('Email de aviso enviado.');
+  await enviarEmail(
+    `Vigia SISFE: ${nuevas.length} nueva(s), ${actualizadas.length} con novedad(es)`,
+    lineas.join('\n')
+  );
 }
 
 async function main() {
@@ -157,11 +160,27 @@ async function main() {
     console.log('No hay estado previo, arranco de cero.');
   }
 
+  let sessionExiste = true;
+  try {
+    await readFile(SESSION_PATH, 'utf8');
+  } catch {
+    sessionExiste = false;
+  }
+
+  if (!sessionExiste) {
+    await enviarEmail(
+      'Vigia SISFE: hace falta loguearse',
+      `Todavia no hay una sesion guardada en ${SESSION_PATH}.\n\nCorre "node src/save-session.mjs" en la PC del estudio para crearla.`
+    );
+    console.error('No existe la sesion guardada. Corre save-session.mjs primero.');
+    process.exit(1);
+  }
+
   const browser = await chromium.launch();
-  const page = await browser.newPage();
+  const context = await browser.newContext({ storageState: SESSION_PATH });
+  const page = await context.newPage();
 
   try {
-    await login(page);
     const causas = await buscar(page);
     console.log(`Encontre ${causas.length} expediente(s) vinculado(s) a la matricula.`);
 
@@ -171,7 +190,7 @@ async function main() {
     if (huboCambios && previas.length > 0) {
       // Solo avisamos si ya habia un estado previo: la primera corrida
       // solo siembra el snapshot inicial, no dispara alertas.
-      await enviarEmail(cambios);
+      await avisarCambios(cambios);
     } else if (huboCambios) {
       console.log('Primera corrida: siembro el snapshot inicial sin avisar por email.');
     } else {
@@ -182,6 +201,16 @@ async function main() {
       STATE_PATH,
       JSON.stringify({ actualizado: new Date().toISOString(), causas }, null, 2)
     );
+  } catch (err) {
+    if (err instanceof SessionExpiradaError) {
+      await enviarEmail(
+        'Vigia SISFE: la sesion vencio',
+        `${err.message}\n\nCorre "node src/save-session.mjs" en la PC del estudio para volver a loguearte (con el captcha a mano) y seguir recibiendo avisos.`
+      );
+      console.error(err.message);
+      process.exit(1);
+    }
+    throw err;
   } finally {
     await browser.close();
   }
