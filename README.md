@@ -38,8 +38,13 @@ contrapartes — incluye causas penales sensibles. Por eso:
   `~/.vigia-sisfe/state.json` (snapshot de causas) viven **fuera del
   repo**, solo en el disco de la PC que corre el chequeo. Nunca se suben a
   git, nunca pasan por GitHub.
-- No hay dashboard web ni GitHub Pages: el único canal de aviso es el
-  email, que te llega directo a tu casilla.
+- No hay GitHub Pages ni nada publicado a internet. Para ver la lista con
+  una interfaz (buscador, link directo a cada expediente) hay un
+  **dashboard local**: `npm run dashboard` levanta un servidor que solo
+  escucha en `127.0.0.1` (tu propia PC) y abrís `http://localhost:5173`
+  en tu navegador. Nadie más puede entrar ahí, ni siquiera en tu misma red.
+- Además llega un email cada vez que hay novedades, con link directo a
+  cada expediente nuevo o actualizado.
 - El repo en sí (código) es público, como tus otras apps, pero no contiene
   ni va a contener nunca datos de causas.
 
