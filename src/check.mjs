@@ -30,7 +30,8 @@ const CIRCUNSCRIPCION = process.env.SISFE_CIRCUNSCRIPCION || 'Rosario';
 const COLEGIO = process.env.SISFE_COLEGIO || 'Abogados';
 
 async function login(page) {
-  await page.goto('https://sisfe.justiciasantafe.gov.ar', { waitUntil: 'networkidle' });
+  await page.goto('https://sisfe.justiciasantafe.gov.ar', { waitUntil: 'domcontentloaded' });
+  await page.getByRole('button', { name: 'Matriculados' }).waitFor({ timeout: 30000 });
   await page.getByRole('button', { name: 'Matriculados' }).click();
 
   await page.waitForSelector('text=IDENTIFICACIÓN DEL MATRICULADO');

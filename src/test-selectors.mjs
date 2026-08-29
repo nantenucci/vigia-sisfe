@@ -8,7 +8,8 @@ import { chromium } from 'playwright';
 const browser = await chromium.launch();
 const page = await browser.newPage();
 
-await page.goto('https://sisfe.justiciasantafe.gov.ar', { waitUntil: 'networkidle' });
+await page.goto('https://sisfe.justiciasantafe.gov.ar', { waitUntil: 'domcontentloaded' });
+await page.getByRole('button', { name: 'Matriculados' }).waitFor({ timeout: 30000 });
 await page.getByRole('button', { name: 'Matriculados' }).click();
 await page.waitForSelector('text=IDENTIFICACIÓN DEL MATRICULADO');
 
