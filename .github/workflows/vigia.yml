@@ -17,9 +17,6 @@ jobs:
   check:
     runs-on: self-hosted
     timeout-minutes: 10
-    defaults:
-      run:
-        shell: 'C:\Program Files\Git\usr\bin\bash.exe --noprofile --norc -eo pipefail {0}'
     steps:
       - uses: actions/checkout@v4
 
