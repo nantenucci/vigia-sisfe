@@ -45,7 +45,16 @@ async function login(page) {
   await page.locator('#password').fill(process.env.SISFE_CONTRASENA);
 
   await page.getByRole('button', { name: 'Ingresar' }).click();
-  await page.waitForURL('**/buscar-expediente', { timeout: 30000 });
+  try {
+    await page.waitForURL('**/buscar-expediente', { timeout: 30000 });
+  } catch (err) {
+    // No exponemos usuario/contraseña, solo lo que el sitio muestra en pantalla
+    // (mensaje de error de login, campo obligatorio faltante, etc.).
+    const texto = await page.locator('body').innerText().catch(() => '(no se pudo leer la pagina)');
+    console.error('No se pudo entrar a /buscar-expediente. URL actual:', page.url());
+    console.error('Texto visible en pantalla en ese momento:\n', texto);
+    throw err;
+  }
 }
 
 async function buscar(page) {
