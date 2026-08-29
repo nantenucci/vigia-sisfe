@@ -1,0 +1,52 @@
+name: Vigia SISFE
+
+on:
+  schedule:
+    # Cada 4 horas, en horario habil aproximado (UTC-3 -> UTC).
+    - cron: '0 11,15,19,23 * * 1-5'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vigia-sisfe
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Instalar dependencias
+        run: npm install
+
+      - name: Instalar navegador (chromium)
+        run: npx playwright install --with-deps chromium
+
+      - name: Correr chequeo
+        env:
+          SISFE_MATRICULA: ${{ secrets.SISFE_MATRICULA }}
+          SISFE_CONTRASENA: ${{ secrets.SISFE_CONTRASENA }}
+          SISFE_CIRCUNSCRIPCION: ${{ secrets.SISFE_CIRCUNSCRIPCION }}
+          SISFE_COLEGIO: ${{ secrets.SISFE_COLEGIO }}
+          NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+        run: npm run check
+
+      - name: Guardar snapshot actualizado
+        run: |
+          git config user.name "vigia-sisfe-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/state.json
+          git diff --cached --quiet || git commit -m "chore: actualizar snapshot de causas"
+          git push
